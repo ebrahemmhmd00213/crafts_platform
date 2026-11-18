@@ -21,6 +21,7 @@ class ServiceOrder(MainModel):
         ASSIGNED = 'assigned', 'مُعيَّن'
         IN_PROGRESS = 'in_progress', 'قيد التنفيذ'
         COMPLETED = 'completed', 'مكتمل'
+        REVIEWED = 'reviewed', "مقيم"
         CANCELLED = 'cancelled', 'ملغى'
 
     customer = models.ForeignKey(
