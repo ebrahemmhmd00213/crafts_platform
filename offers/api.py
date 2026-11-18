@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from orders.models import ServiceOrder
 from .models import Offer
 from .serializers import OfferSerializer
+
 from .permissions import (
     IsCustomer, IsTechnician, IsOfferOwner, IsOfferOrderOwner,
 )
@@ -81,10 +82,10 @@ class OfferViewSet(viewsets.ModelViewSet):
     # ─────────────────────────────────────────────
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
+        from chat.models import Conversation
         with transaction.atomic():
             # get_object() يتحقق من IsOfferOrderOwner تلقائياً
             offer = self.get_object()
-            # نعيد الجلب مع القفل لمنع race condition
             offer = Offer.objects.select_for_update().select_related('order').get(pk=offer.pk)
             order = offer.order
 
@@ -109,6 +110,15 @@ class OfferViewSet(viewsets.ModelViewSet):
             order.status = ServiceOrder.Status.ASSIGNED
             order.final_price = offer.price
             order.save(update_fields=['technician', 'status', 'final_price'])
+
+            # ✅ إنشاء المحادثة (إن لم تكن موجودة)
+            Conversation.objects.get_or_create(
+                order=order,
+                defaults={
+                    'customer': order.customer,
+                    'technician': offer.technician,
+                },
+            )
 
         return Response({
             'status': 'accepted',
