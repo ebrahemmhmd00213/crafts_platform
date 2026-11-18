@@ -23,7 +23,10 @@ class ServiceOrder(MainModel):
         COMPLETED = 'completed', 'مكتمل'
         CANCELLED = 'cancelled', 'ملغى'
 
-    customer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders')
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,   # ← سلسلة نصية 'accounts.User'
+        on_delete=models.CASCADE,
+    )
     technician = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='assigned_orders',
