@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# البيئة الافتراضية
+venv/
+.venv/
+env/
+
+# ملفات PostgreSQL المحلية (نسخ احتياطية، dumps)
+*.sql
+*.dump
+*.backup
+
+# ملفات الوسائط التي يرفعها المستخدمون
+media/
+
+# ملفات IDE
+.vscode/
+.idea/
+
+# ملفات سرية (كلمات مرور قاعدة البيانات، مفاتيح API)
+.env
+*.env
