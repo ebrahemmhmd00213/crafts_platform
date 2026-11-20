@@ -1,32 +1,22 @@
-# orders/tasks.py
 from celery import shared_task
 import logging
 
 logger = logging.getLogger(__name__)
 
-
-@shared_task(bind=True, max_retries=3)
-def notify_nearby_technicians(self, order_id, technician_user_ids):
-    """إرسال إشعار للفنيين القريبين — يعمل في الخلفية."""
-    from orders.models import ServiceOrder
+@shared_task
+def notify_nearby_technicians(order_id, tech_ids):
     from accounts.models import User
-    from orders.notifications import send_push_notification
-
-    try:
-        order = ServiceOrder.objects.get(id=order_id)
-    except ServiceOrder.DoesNotExist:
-        logger.warning(f"Order {order_id} not found for notification")
-        return
-
-    technicians = User.objects.filter(id__in=technician_user_ids)
+    from firebase_admin import messaging
+    technicians = User.objects.filter(id__in=tech_ids, fcm_token__isnull=False).exclude(fcm_token='')
     for tech in technicians:
         try:
-            send_push_notification(
-                user=tech,
-                title="طلب جديد قريب منك",
-                body=f"{order.service_type}: {order.title}",
-                data={'order_id': order.id},
-            )
-        except Exception as exc:
-            logger.error(f"Failed to notify user {tech.id}: {exc}")
-            # retry اختياري
+            messaging.send(messaging.Message(
+                notification=messaging.Notification(
+                    title='طلب خدمة جديد',
+                    body=f'يوجد طلب جديد قريب منك (رقم {order_id})',
+                ),
+                token=tech.fcm_token,
+            ))
+        except Exception as e:
+            logger.error(f"FCM failed for {tech.id}: {e}")
+    logger.info(f"Notified {technicians.count()} technicians for order {order_id}")

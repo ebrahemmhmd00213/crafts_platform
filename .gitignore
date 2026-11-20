@@ -1,14 +1,109 @@
+# ============================================================
+# .gitignore — مشروع crafts_platform (Django)
+# ============================================================
+
+# ===== Python =====
 __pycache__/
 *.py[cod]
-*.pyc
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===== البيئة الافتراضية (Virtual Environment) =====
+# ⚠️ مهم: البيئة هنا تسمى crafts_platform وتتداخل مع مجلد الكود،
+# لذلك نتجاهل محتوياتها فقط وليس المجلد نفسه.
 venv/
-.venv/
 env/
-*.sql
-*.dump
+ENV/
+.venv/
+/Lib/
+/Scripts/
+/Include/
+/pyvenv.cfg
+pip-selfcheck.json
+
+# ===== Django =====
+*.log
+local_settings.py
+/staticfiles/
+/static_root/
+/media/
+
+# ===== قاعدة البيانات (تطوير فقط) =====
+# ⚠️ لا تتجاهل قاعدة البيانات إذا كانت جزءاً من بيانات الإنتاج.
+# ⚠️ إذا كنت تشارك بيانات تجريبية مع الفريق، استثنِها بـ !db.sqlite3
+db.sqlite3
+db.sqlite3-journal
+*.sqlite3
+*.db
+
+# ===== متغيرات البيئة والأسرار =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.json
+secret_key.txt
+credentials.json
+
+# ===== Docker =====
+*.pid
+docker-compose.override.yml
+.docker/
+
+# ===== ملفات مؤقتة ونسخ احتياطية =====
+*.bak
 *.backup
-media/
+*.old
+*.orig
+*.rej
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ===== IDE / المحررات =====
 .vscode/
 .idea/
-.env
-*.env
+*.sublime-project
+*.sublime-workspace
+
+# ===== نظام التشغيل =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===== أدوات إضافية =====
+.ipynb_checkpoints/
+node_modules/
+npm-debug.log*
+yarn-error.log*

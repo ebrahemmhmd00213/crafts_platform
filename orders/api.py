@@ -36,12 +36,17 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
     # ─────────────────────────────────────────────
     def get_permissions(self):
         if self.action == 'create':
-            return [permissions.IsAuthenticated(), IsCustomer(), OrderCreateThrottle()]
+            return [permissions.IsAuthenticated(), IsCustomer()]
         if self.action in ['update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated(), IsCustomer(), IsOrderOwner()]
         if self.action in ['start', 'complete']:
             return [permissions.IsAuthenticated(), IsTechnician(), IsAssignedTechnician()]
         return [permissions.IsAuthenticated()]
+
+    def get_throttles(self):
+        if self.action == 'create':
+            return [OrderCreateThrottle()]
+        return []
 
     # ─────────────────────────────────────────────
     # تصفية البيانات حسب الدور والإجراء
@@ -54,7 +59,9 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
             return base.filter(customer=user)
 
         if user.role == User.Role.TECHNICIAN:
-            if not hasattr(user, 'tech_profile'):
+            try:
+                profile = user.tech_profile
+            except User.tech_profile.RelatedObjectDoesNotExist:
                 return base.none()
             # في retrieve/start/complete: الطلبات المُعيَّنة له فقط
             if self.action in ['retrieve', 'start', 'complete']:
@@ -97,6 +104,23 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
             f"notifying {len(tech_ids)} technicians"
         )
 
+    def destroy(self, request, *args, **kwargs):
+        """منع حذف الطلبات المكتملة أو قيد التنفيذ."""
+        order = self.get_object()
+
+        if order.status in [ServiceOrder.Status.COMPLETED,ServiceOrder.Status.REVIEWED,]:
+            return Response({'error': 'لا يمكن حذف طلب مكتمل أو مُقيَّم'},status=400,)
+
+        if order.status == ServiceOrder.Status.IN_PROGRESS:
+            return Response({'error': 'لا يمكن حذف طلب قيد التنفيذ'},status=400,)
+
+        order.is_deleted = True
+        order.deleted_at = timezone.now()
+        order.save(update_fields=['is_deleted', 'deleted_at'])
+        
+
+        return super().destroy(request, *args, **kwargs), Response(status=204)
+
     # ─────────────────────────────────────────────
     # الفني يبدأ التنفيذ
     # ─────────────────────────────────────────────
@@ -126,20 +150,51 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         """الفني ينهي التنفيذ ويسجل السعر النهائي (دفع نقدي)."""
         order = self.get_object()
 
+        # 1) التحقق من الحالة
         if order.status != ServiceOrder.Status.IN_PROGRESS:
             return Response(
                 {'error': f'لا يمكن إكمال طلب في الحالة {order.status}'},
                 status=400,
             )
 
-        # التحقق من final_price عبر Serializer
+        # 2) التحقق من صحة البيانات
         s = CompleteOrderSerializer(data=request.data)
         s.is_valid(raise_exception=True)
+        price = s.validated_data['final_price']
 
-        order.final_price = s.validated_data['final_price']
+        # 3) التحقق من وجود عرض مقبول
+        accepted_offer = order.offers.filter(is_accepted=True).first()
+        if not accepted_offer:
+            return Response(
+                {'error': 'لا يوجد عرض مقبول لهذا الطلب'},
+                status=400,
+            )
+
+        # 4) منع السعر غير المنطقي (أقل من 50% من العرض المقبول)
+        from decimal import Decimal
+        if price <= 0:
+            return Response(
+                {'error': 'السعر النهائي يجب أن يكون أكبر من صفر'},
+                status=400,
+            )
+        if price < (accepted_offer.price * Decimal('0.5')):
+            return Response(
+                {'error': 'السعر النهائي أقل من الحد المسموح مقارنة بالعرض المقبول'},
+                status=400,
+            )
+
+        # 5) حفظ الطلب
+        order.final_price = price
         order.status = ServiceOrder.Status.COMPLETED
         order.completed_at = timezone.now()
         order.save(update_fields=['final_price', 'status', 'completed_at'])
+
+        # 6) احتساب العمولة تلقائياً (على الخادم)
+        from commissions.services import create_commission
+        try:
+            create_commission(order)
+        except ValueError as e:
+            logger.error(f"Commission failed for order {order.id}: {e}")
 
         logger.info(
             f"Order {order.id} completed by technician {request.user.id} "

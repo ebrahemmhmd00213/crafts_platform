@@ -3,6 +3,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from accounts.models import User
 from .models import Commission
 from .serializers import CommissionSerializer
 from .permissions import IsAdmin, IsCommissionOwner
@@ -20,13 +21,21 @@ class CommissionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         base = Commission.objects.select_related('order', 'technician')
-        if user.role == 'technician':
+
+        
+        if user.role == User.Role.TECHNICIAN:
             return base.filter(technician=user)
-        return base.all()   # admin يرى الكل
+
+       
+        if user.role == User.Role.ADMIN or user.is_staff:
+            return base.all()
+
+        
+        return base.none()
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
-        """المدير يعلّم العمولة كمدفوعة."""
+        
         commission = self.get_object()
         if commission.status == Commission.Status.PAID:
             return Response(
