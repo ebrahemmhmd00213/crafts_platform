@@ -12,6 +12,7 @@ from .permissions import IsConversationParticipant, IsMessageSenderOrParticipant
 class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
     """المحادثات للقراءة فقط — تُنشأ تلقائياً عند قبول العرض."""
     serializer_class = ConversationSerializer
+    permission_classes = [permissions.IsAuthenticated, IsConversationParticipant]
 
     def get_queryset(self):
         user = self.request.user
@@ -24,16 +25,21 @@ class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
         """جلب رسائل محادثة."""
         conversation = self.get_object()
         msgs = conversation.messages.select_related('sender')
-        # علّم الرسائل كمقروءة
         msgs.exclude(sender=request.user).update(is_read=True)
         return Response(MessageSerializer(msgs, many=True).data)
 
 
 class MessageViewSet(viewsets.ModelViewSet):
-    """إرسال/قراءة الرسائل."""
+    """إرسال/قراءة الرسائل — مع حماية من تعديل/حذف رسائل الآخرين."""
     serializer_class = MessageSerializer
 
     def get_permissions(self):
+        # ✅ الإصلاح: تفعيل IsMessageSenderOrParticipant للتعديل والحذف
+        if self.action in ['update', 'partial_update', 'destroy']:
+            return [
+                permissions.IsAuthenticated(),
+                IsMessageSenderOrParticipant(),
+            ]
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
@@ -47,10 +53,8 @@ class MessageViewSet(viewsets.ModelViewSet):
         conversation = serializer.validated_data['conversation']
         user = self.request.user
 
-        # التحقق من أن المستخدم طرف في المحادثة
         if user.id not in (conversation.customer_id, conversation.technician_id):
             raise serializers.ValidationError('أنت لست طرفاً في هذه المحادثة')
 
         serializer.save(sender=user)
-        # تحديث updated_at للمحادثة
         conversation.save(update_fields=['updated_at'])

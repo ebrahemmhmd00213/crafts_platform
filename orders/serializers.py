@@ -10,19 +10,17 @@ class OrderImageSerializer(serializers.ModelSerializer):
 
 
 class ServiceOrderSerializer(serializers.ModelSerializer):
-    images = OrderImageSerializer(many=True, read_only=True)   # للعرض فقط
+    service_type_name = serializers.CharField(source='service_type.name', read_only=True)
+    images = OrderImageSerializer(many=True, read_only=True)
 
     class Meta:
         model = ServiceOrder
         fields = [
-            'id', 'title', 'description', 'service_type',
+            'id', 'title', 'description', 'service_type', 'service_type_name',
             'latitude', 'longitude', 'status',
             'customer', 'technician', 'final_price',
             'created_at', 'images',
-        ]
-        read_only_fields = [
-            'customer', 'technician', 'status',
-            'final_price', 'created_at',
+        
         ]
 
 

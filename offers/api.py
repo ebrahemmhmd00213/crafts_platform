@@ -6,21 +6,19 @@ from rest_framework.response import Response
 from orders.models import ServiceOrder
 from .models import Offer
 from .serializers import OfferSerializer
-
 from .permissions import (
-    IsCustomer, IsTechnician, IsOfferOwner, IsOfferOrderOwner,
+    IsCustomer, IsTechnician, IsApprovedTechnician,
+    IsOfferOwner, IsOfferOrderOwner,
 )
 
 
 class OfferViewSet(viewsets.ModelViewSet):
     serializer_class = OfferSerializer
 
-    # ─────────────────────────────────────────────
-    # الصلاحيات حسب الإجراء
-    # ─────────────────────────────────────────────
     def get_permissions(self):
         if self.action == 'create':
-            return [permissions.IsAuthenticated(), IsTechnician()]
+            # ✅ نطلب فنيًا معتمدًا وليس أي فني
+            return [permissions.IsAuthenticated(), IsApprovedTechnician()]
         if self.action == 'accept':
             return [
                 permissions.IsAuthenticated(),
@@ -35,9 +33,6 @@ class OfferViewSet(viewsets.ModelViewSet):
             ]
         return [permissions.IsAuthenticated()]
 
-    # ─────────────────────────────────────────────
-    # تصفية البيانات حسب الدور
-    # ─────────────────────────────────────────────
     def get_queryset(self):
         user = self.request.user
         base = Offer.objects.select_related('order', 'technician')
@@ -45,9 +40,6 @@ class OfferViewSet(viewsets.ModelViewSet):
             return base.filter(technician=user)
         return base.filter(order__customer=user)
 
-    # ─────────────────────────────────────────────
-    # إنشاء عرض (فني)
-    # ─────────────────────────────────────────────
     def perform_create(self, serializer):
         with transaction.atomic():
             order = ServiceOrder.objects.select_for_update().get(
@@ -65,9 +57,25 @@ class OfferViewSet(viewsets.ModelViewSet):
                 order.status = ServiceOrder.Status.OFFERS_RECEIVED
                 order.save(update_fields=['status'])
 
-    # ─────────────────────────────────────────────
-    # منع حذف عرض مقبول
-    # ─────────────────────────────────────────────
+    # ✅ منع تعديل عرض مقبول أو مقفل
+    def update(self, request, *args, **kwargs):
+        offer = self.get_object()
+        if offer.is_accepted or offer.is_locked:
+            return Response(
+                {'error': 'لا يمكن تعديل عرض مقبول أو مقفل'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        offer = self.get_object()
+        if offer.is_accepted or offer.is_locked:
+            return Response(
+                {'error': 'لا يمكن تعديل عرض مقبول أو مقفل'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().partial_update(request, *args, **kwargs)
+
     def destroy(self, request, *args, **kwargs):
         offer = self.get_object()
         if offer.is_accepted:
@@ -77,19 +85,14 @@ class OfferViewSet(viewsets.ModelViewSet):
             )
         return super().destroy(request, *args, **kwargs)
 
-    # ─────────────────────────────────────────────
-    # قبول عرض (عميل)
-    # ─────────────────────────────────────────────
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
         from chat.models import Conversation
         with transaction.atomic():
-            # get_object() يتحقق من IsOfferOrderOwner تلقائياً
             offer = self.get_object()
             offer = Offer.objects.select_for_update().select_related('order').get(pk=offer.pk)
             order = offer.order
 
-            # التحقق من الحالة (الملكية تحققت في get_object)
             if offer.is_accepted:
                 return Response({'error': 'هذا العرض مقبول بالفعل'}, status=400)
             if order.status != ServiceOrder.Status.OFFERS_RECEIVED:
@@ -98,20 +101,18 @@ class OfferViewSet(viewsets.ModelViewSet):
                     status=400,
                 )
 
-            # رفض باقي العروض
-            order.offers.exclude(id=offer.id).update(is_accepted=False)
+            order.offers.exclude(id=offer.id).update(is_accepted=False, is_locked=True)
 
-            # قبول هذا العرض
+            # ✅ قفل العرض المقبول أيضًا
             offer.is_accepted = True
-            offer.save(update_fields=['is_accepted'])
+            offer.is_locked = True
+            offer.save(update_fields=['is_accepted', 'is_locked'])
 
-            # تحديث الطلب وتعيين الفني
             order.technician = offer.technician
             order.status = ServiceOrder.Status.ASSIGNED
             order.final_price = offer.price
             order.save(update_fields=['technician', 'status', 'final_price'])
 
-            # ✅ إنشاء المحادثة (إن لم تكن موجودة)
             Conversation.objects.get_or_create(
                 order=order,
                 defaults={

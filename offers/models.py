@@ -18,19 +18,20 @@ class Offer(MainModel):
     )
     technician = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,   
+        on_delete=models.SET_NULL,
         null=True,
-        related_name='offers',        
+        related_name='offers',
     )
     price = models.DecimalField(
         max_digits=10, decimal_places=2,
-        validators=[MinValueValidator(0)],   
+        validators=[MinValueValidator(0)],
     )
     estimated_hours = models.PositiveIntegerField(
-        validators=[MinValueValidator(1)],  
+        validators=[MinValueValidator(1)],
     )
     message = models.TextField(blank=True)
     is_accepted = models.BooleanField(default=False)
+    is_locked = models.BooleanField(default=False)   # ✅ جديد
 
     class Meta:
         ordering = ['-created_at']

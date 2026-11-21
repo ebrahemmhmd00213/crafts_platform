@@ -1,5 +1,5 @@
 # ============================================================
-# .gitignore — مشروع crafts_platform (Django)
+# .gitignore — مشروع crafts_platform (Django + PostgreSQL)
 # ============================================================
 
 # ===== Python =====
@@ -14,6 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
+lib/
+lib64/
 parts/
 sdist/
 var/
@@ -23,9 +25,7 @@ wheels/
 *.egg
 MANIFEST
 
-# ===== البيئة الافتراضية (Virtual Environment) =====
-# ⚠️ مهم: البيئة هنا تسمى crafts_platform وتتداخل مع مجلد الكود،
-# لذلك نتجاهل محتوياتها فقط وليس المجلد نفسه.
+# ===== البيئة الافتراضية =====
 venv/
 env/
 ENV/
@@ -43,13 +43,36 @@ local_settings.py
 /static_root/
 /media/
 
-# ===== قاعدة البيانات (تطوير فقط) =====
-# ⚠️ لا تتجاهل قاعدة البيانات إذا كانت جزءاً من بيانات الإنتاج.
-# ⚠️ إذا كنت تشارك بيانات تجريبية مع الفريق، استثنِها بـ !db.sqlite3
+# ===== قواعد البيانات (تطوير فقط) =====
+# ⚠️ المشروع يستخدم PostgreSQL — لا تُرفع ملفات dump أو backup.
+# ⚠️ إذا كنت تشارك بيانات تجريبية، استثنِ الملف بـ !filename
+
+# SQLite (إن استُخدم محليًا)
+*.sqlite3
+*.sqlite3-journal
 db.sqlite3
 db.sqlite3-journal
-*.sqlite3
+
+# PostgreSQL dump/backup
+*.dump
+*.sql.gz
+*.sql.bz2
+*.sql.zip
+*.backup
+*.bak
+pg_dump*
+*.pgdump
+
+# PostgreSQL data directories (احتياطي)
+pgdata/
+postgres-data/
+/data/
+*.pid
+
+# قواعد بيانات كاملة
 *.db
+*.db3
+*.sqlite
 
 # ===== متغيرات البيئة والأسرار =====
 .env
@@ -68,11 +91,6 @@ docker-compose.override.yml
 .docker/
 
 # ===== ملفات مؤقتة ونسخ احتياطية =====
-*.bak
-*.backup
-*.old
-*.orig
-*.rej
 *.tmp
 *.temp
 *.swp

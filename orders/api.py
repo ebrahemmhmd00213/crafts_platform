@@ -1,4 +1,4 @@
-# orders/views.py
+# orders/api.py
 import logging
 
 from django.db import transaction
@@ -13,7 +13,7 @@ from rest_framework.throttling import UserRateThrottle
 
 from accounts.models import User
 from .models import ServiceOrder, OrderImage
-from .serializers import ServiceOrderSerializer, CompleteOrderSerializer
+from .serializers import ServiceOrderSerializer
 from .services import find_nearby_technicians
 from .permissions import (
     IsCustomer, IsTechnician, IsOrderOwner, IsAssignedTechnician,
@@ -41,6 +41,8 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), IsCustomer(), IsOrderOwner()]
         if self.action in ['start', 'complete']:
             return [permissions.IsAuthenticated(), IsTechnician(), IsAssignedTechnician()]
+        if self.action == 'withdraw':
+            return [permissions.IsAuthenticated(), IsTechnician(), IsAssignedTechnician()]
         return [permissions.IsAuthenticated()]
 
     def get_throttles(self):
@@ -53,7 +55,10 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
     # ─────────────────────────────────────────────
     def get_queryset(self):
         user = self.request.user
-        base = ServiceOrder.objects.select_related('customer', 'technician').order_by('-created_at')
+        # استثناء الطلبات المحذوفة منطقيًا
+        base = ServiceOrder.objects.filter(is_deleted=False).select_related(
+            'customer', 'technician', 'service_type'
+        ).order_by('-created_at')
 
         if user.role == User.Role.CUSTOMER:
             return base.filter(customer=user)
@@ -63,13 +68,17 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
                 profile = user.tech_profile
             except User.tech_profile.RelatedObjectDoesNotExist:
                 return base.none()
-            # في retrieve/start/complete: الطلبات المُعيَّنة له فقط
-            if self.action in ['retrieve', 'start', 'complete']:
+
+            # في retrieve/start/complete/withdraw: الطلبات المُعيَّنة له فقط
+            if self.action in ['retrieve', 'start', 'complete', 'withdraw']:
                 return base.filter(technician=user)
+
             # في list: الطلبات المتاحة + المُعيَّنة له
             return base.filter(
-                Q(status__in=['open', 'offers_received'],
-                  service_type=user.tech_profile.service_type)
+                Q(
+                    status__in=['open', 'offers_received'],
+                    service_type_id=profile.service_type_id,   # ✅ FK
+                )
                 | Q(technician=user)
             )
 
@@ -90,10 +99,8 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
                     raise ValidationError(f"الملف {img.name} ليس صورة")
                 OrderImage.objects.create(order=order, image=img)
 
-            # البحث عن الفنيين داخل الـ transaction (لأننا نحتاج order)
             tech_ids = [t.user_id for t in find_nearby_technicians(order)]
 
-            # الإشعارات بعد commit فقط
             if tech_ids:
                 transaction.on_commit(
                     lambda: notify_nearby_technicians.delay(order.id, tech_ids)
@@ -104,29 +111,35 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
             f"notifying {len(tech_ids)} technicians"
         )
 
+    # ─────────────────────────────────────────────
+    # ✅ إصلاح الخطأ 4: حذف منطقي فقط
+    # ─────────────────────────────────────────────
     def destroy(self, request, *args, **kwargs):
-        """منع حذف الطلبات المكتملة أو قيد التنفيذ."""
         order = self.get_object()
 
-        if order.status in [ServiceOrder.Status.COMPLETED,ServiceOrder.Status.REVIEWED,]:
-            return Response({'error': 'لا يمكن حذف طلب مكتمل أو مُقيَّم'},status=400,)
-
+        if order.status in [ServiceOrder.Status.COMPLETED, ServiceOrder.Status.REVIEWED]:
+            return Response(
+                {'error': 'لا يمكن حذف طلب مكتمل أو مُقيَّم'},
+                status=400,
+            )
         if order.status == ServiceOrder.Status.IN_PROGRESS:
-            return Response({'error': 'لا يمكن حذف طلب قيد التنفيذ'},status=400,)
+            return Response(
+                {'error': 'لا يمكن حذف طلب قيد التنفيذ'},
+                status=400,
+            )
 
         order.is_deleted = True
         order.deleted_at = timezone.now()
         order.save(update_fields=['is_deleted', 'deleted_at'])
-        
 
-        return super().destroy(request, *args, **kwargs), Response(status=204)
+        logger.info(f"Order {order.id} soft-deleted by user {request.user.id}")
+        return Response(status=204)
 
     # ─────────────────────────────────────────────
     # الفني يبدأ التنفيذ
     # ─────────────────────────────────────────────
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):
-        """الفني يبدأ تنفيذ الطلب (من assigned إلى in_progress)."""
         order = self.get_object()
 
         if order.status != ServiceOrder.Status.ASSIGNED:
@@ -143,26 +156,18 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         return Response(ServiceOrderSerializer(order).data)
 
     # ─────────────────────────────────────────────
-    # الفني يكمل الطلب ويسجل السعر
+    # ✅ إصلاح الخطأ 6: السعر = سعر العرض المقبول (لا يُدخله الفني)
     # ─────────────────────────────────────────────
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
-        """الفني ينهي التنفيذ ويسجل السعر النهائي (دفع نقدي)."""
         order = self.get_object()
 
-        # 1) التحقق من الحالة
         if order.status != ServiceOrder.Status.IN_PROGRESS:
             return Response(
                 {'error': f'لا يمكن إكمال طلب في الحالة {order.status}'},
                 status=400,
             )
 
-        # 2) التحقق من صحة البيانات
-        s = CompleteOrderSerializer(data=request.data)
-        s.is_valid(raise_exception=True)
-        price = s.validated_data['final_price']
-
-        # 3) التحقق من وجود عرض مقبول
         accepted_offer = order.offers.filter(is_accepted=True).first()
         if not accepted_offer:
             return Response(
@@ -170,30 +175,17 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
                 status=400,
             )
 
-        # 4) منع السعر غير المنطقي (أقل من 50% من العرض المقبول)
-        from decimal import Decimal
-        if price <= 0:
-            return Response(
-                {'error': 'السعر النهائي يجب أن يكون أكبر من صفر'},
-                status=400,
-            )
-        if price < (accepted_offer.price * Decimal('0.5')):
-            return Response(
-                {'error': 'السعر النهائي أقل من الحد المسموح مقارنة بالعرض المقبول'},
-                status=400,
-            )
-
-        # 5) حفظ الطلب
-        order.final_price = price
+        # ✅ السعر النهائي = سعر العرض المقبول (خادم يحدده، لا الفني)
+        order.final_price = accepted_offer.price
         order.status = ServiceOrder.Status.COMPLETED
         order.completed_at = timezone.now()
         order.save(update_fields=['final_price', 'status', 'completed_at'])
 
-        # 6) احتساب العمولة تلقائياً (على الخادم)
+        # احتساب العمولة تلقائيًا
         from commissions.services import create_commission
         try:
             create_commission(order)
-        except ValueError as e:
+        except Exception as e:
             logger.error(f"Commission failed for order {order.id}: {e}")
 
         logger.info(
@@ -203,12 +195,11 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         return Response(ServiceOrderSerializer(order).data)
 
     # ─────────────────────────────────────────────
-    # العميل يلغي الطلب (اختياري لكن مفيد)
+    # العميل يلغي الطلب
     # ─────────────────────────────────────────────
     @action(detail=True, methods=['post'],
             permission_classes=[permissions.IsAuthenticated, IsCustomer, IsOrderOwner])
     def cancel(self, request, pk=None):
-        """العميل يلغي طلبه (فقط قبل البدء بالتنفيذ)."""
         order = self.get_object()
 
         if order.status not in [
@@ -225,4 +216,28 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=['status'])
 
         logger.info(f"Order {order.id} cancelled by customer {request.user.id}")
+        return Response(ServiceOrderSerializer(order).data)
+
+    # ─────────────────────────────────────────────
+    # ✅ إضافة: الفني ينسحب من الطلب
+    # ─────────────────────────────────────────────
+    @action(detail=True, methods=['post'])
+    def withdraw(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status != ServiceOrder.Status.ASSIGNED:
+            return Response(
+                {'error': 'لا يمكن الانسحاب إلا من طلب مُعيَّن'},
+                status=400,
+            )
+
+        # إلغاء قبول العرض
+        order.offers.filter(is_accepted=True).update(is_accepted=False)
+
+        order.technician = None
+        order.status = ServiceOrder.Status.OFFERS_RECEIVED
+        order.final_price = None
+        order.save(update_fields=['technician', 'status', 'final_price'])
+
+        logger.info(f"Technician {request.user.id} withdrew from order {order.id}")
         return Response(ServiceOrderSerializer(order).data)

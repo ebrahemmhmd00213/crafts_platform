@@ -23,6 +23,18 @@ class User(AbstractUser):
     longitude = models.FloatField(null=True, blank=True)
 
 
+class ServiceType(MainModel):
+    name = models.CharField(max_length=50, unique=True)
+    slug = models.SlugField(max_length=50, unique=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class TechnicianProfile(MainModel):
     class Status(models.TextChoices):
         PENDING = 'pending'
@@ -30,7 +42,7 @@ class TechnicianProfile(MainModel):
         REJECTED = 'rejected'
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='tech_profile')
-    service_type = models.CharField(max_length=50)       
+    service_type = models.ForeignKey( ServiceType, on_delete=models.PROTECT, related_name='technicians' )      
     id_document = models.ImageField(upload_to='ids/')
     photo = models.ImageField(upload_to='photos/')
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
