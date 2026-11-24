@@ -26,6 +26,8 @@ class IsApprovedTechnician(permissions.BasePermission):
             return False
         if request.user.role != User.Role.TECHNICIAN:
             return False
+        if not request.user.is_phone_verified:   
+            return False
         try:
             return request.user.tech_profile.status == 'approved'
         except Exception:

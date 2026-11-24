@@ -126,3 +126,9 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 debug_bundle.txt
+firebase-credentials.json
+firebase-credentials.json
+firebase-credentials.json.json
+*.json
+!package.json
+!*.example.json

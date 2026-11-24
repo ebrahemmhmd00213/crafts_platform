@@ -9,7 +9,7 @@ class UserAdmin(BaseUserAdmin):
     list_filter = ['role', 'is_active', 'is_staff']
     search_fields = ['username', 'email', 'phone']
     fieldsets = BaseUserAdmin.fieldsets + (
-        ('بيانات إضافية', {'fields': ('role', 'phone', 'latitude', 'longitude')}),
+        ('بيانات إضافية', {'fields': ('role', 'phone', 'latitude', 'longitude','fcm_token')}),
     )
 
 

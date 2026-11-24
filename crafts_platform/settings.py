@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'drf_spectacular',
 
     #apps
@@ -158,6 +159,7 @@ REST_FRAMEWORK = {
         },
     
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    
 
 
 }
@@ -181,3 +183,22 @@ MEDIA_ROOT = BASE_DIR / 'media'
 from decimal import Decimal
 
 COMMISSION_RATE = Decimal('0.10')   # 10%
+
+import firebase_admin
+from firebase_admin import credentials
+
+FIREBASE_CREDENTIALS = BASE_DIR / 'firebase-credentials.json'
+if FIREBASE_CREDENTIALS.exists():
+    cred = credentials.Certificate(str(FIREBASE_CREDENTIALS))
+    firebase_admin.initialize_app(cred)
+
+# ===== Twilio (لإرسال OTP) =====
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
+
+# مدة صلاحية OTP (بالدقائق)
+OTP_EXPIRY_MINUTES = 5
+
+# الحد الأقصى لمحاولات التحقق
+OTP_MAX_ATTEMPTS = 5

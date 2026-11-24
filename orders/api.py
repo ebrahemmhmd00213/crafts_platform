@@ -1,11 +1,12 @@
 # orders/api.py
 import logging
 
+ 
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions,generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
@@ -70,17 +71,25 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
                 return base.none()
 
             # في retrieve/start/complete/withdraw: الطلبات المُعيَّنة له فقط
-            if self.action in ['retrieve', 'start', 'complete', 'withdraw']:
+            if self.action in [ 'start', 'complete', 'withdraw']:
                 return base.filter(technician=user)
 
             # في list: الطلبات المتاحة + المُعيَّنة له
-            return base.filter(
-                Q(
-                    status__in=['open', 'offers_received'],
-                    service_type_id=profile.service_type_id,   # ✅ FK
+            if self.action =='retrieve':
+                return base.filter(
+                    Q(
+                        status__in=['open', 'offers_received'],
+                        service_type_id=profile.service_type_id,   # ✅ FK
+                    )
+                    | Q(technician=user)
                 )
-                | Q(technician=user)
-            )
+            return base.filter(
+            Q(
+                status__in=['open', 'offers_received'],
+                service_type_id=profile.service_type_id,
+                )
+            | Q(technician=user, status__in=['assigned', 'in_progress'])
+                                )
 
         # admin
         return base.all()
@@ -135,6 +144,26 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         logger.info(f"Order {order.id} soft-deleted by user {request.user.id}")
         return Response(status=204)
 
+
+        # ─────────────────────────────────────────────
+    # ✅ منع تعديل الطلب بعد الإنجاز أو الإلغاء
+    # ─────────────────────────────────────────────
+    def update(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status in [ServiceOrder.Status.COMPLETED, ServiceOrder.Status.REVIEWED]:
+            return Response({'error': 'لا يمكن تعديل طلب مكتمل أو مُقيَّم'}, status=400)
+        if order.status in [ServiceOrder.Status.IN_PROGRESS, ServiceOrder.Status.CANCELLED]:
+            return Response({'error': f'لا يمكن تعديل طلب في الحالة {order.status}'}, status=400)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status in [ServiceOrder.Status.COMPLETED, ServiceOrder.Status.REVIEWED]:
+            return Response({'error': 'لا يمكن تعديل طلب مكتمل أو مُقيَّم'}, status=400)
+        if order.status in [ServiceOrder.Status.IN_PROGRESS, ServiceOrder.Status.CANCELLED]:
+            return Response({'error': f'لا يمكن تعديل طلب في الحالة {order.status}'}, status=400)
+        return super().partial_update(request, *args, **kwargs)
+
     # ─────────────────────────────────────────────
     # الفني يبدأ التنفيذ
     # ─────────────────────────────────────────────
@@ -151,6 +180,9 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         order.status = ServiceOrder.Status.IN_PROGRESS
         order.started_at = timezone.now()
         order.save(update_fields=['status', 'started_at'])
+
+        from orders.notifications import notify_order_started   
+        notify_order_started(order)                             
 
         logger.info(f"Order {order.id} started by technician {request.user.id}")
         return Response(ServiceOrderSerializer(order).data)
@@ -188,6 +220,9 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Commission failed for order {order.id}: {e}")
 
+        from orders.notifications import notify_order_completed
+        notify_order_completed(order)
+
         logger.info(
             f"Order {order.id} completed by technician {request.user.id} "
             f"with price {order.final_price}"
@@ -213,7 +248,17 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
             )
 
         order.status = ServiceOrder.Status.CANCELLED
-        order.save(update_fields=['status'])
+
+        if order.technician_id:
+            from orders.notifications import notify_order_cancelled
+            notify_order_cancelled(order)
+
+
+        if order.technician_id:
+            order.technician = None
+
+        order.save(update_fields=['status', 'technician'])
+
 
         logger.info(f"Order {order.id} cancelled by customer {request.user.id}")
         return Response(ServiceOrderSerializer(order).data)
@@ -241,3 +286,8 @@ class ServiceOrderViewSet(viewsets.ModelViewSet):
 
         logger.info(f"Technician {request.user.id} withdrew from order {order.id}")
         return Response(ServiceOrderSerializer(order).data)
+
+
+
+
+

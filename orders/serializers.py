@@ -22,6 +22,15 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
             'created_at', 'images',
         
         ]
+        read_only_fields = [      
+            'customer', 'technician', 'status',
+            'final_price', 'created_at',
+        ]
+
+    def validate_service_type(self, value):
+        if not value.is_active:
+            raise serializers.ValidationError('نوع الخدمة غير متاح')
+        return value
 
 
 class CompleteOrderSerializer(serializers.Serializer):

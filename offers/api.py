@@ -120,7 +120,8 @@ class OfferViewSet(viewsets.ModelViewSet):
                     'technician': offer.technician,
                 },
             )
-
+        from orders.notifications import notify_offer_accepted
+        notify_offer_accepted(order)
         return Response({
             'status': 'accepted',
             'order_id': order.id,

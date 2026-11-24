@@ -27,12 +27,22 @@ class OfferSerializer(serializers.ModelSerializer):
 
         if user.role != 'technician':
             raise serializers.ValidationError('فقط الفنيون يمكنهم تقديم عروض')
+        
         if order.customer_id == user.id:
             raise serializers.ValidationError('لا يمكنك تقديم عرض على طلبك')
+        
         if order.status not in ['open', 'offers_received']:
             raise serializers.ValidationError('الطلب لا يستقبل عروضاً حالياً')
+
+        if not order.service_type.is_active:   # ✅ أضف
+            raise serializers.ValidationError('نوع الخدمة غير متاح')
+        
+        if order.service_type_id != user.tech_profile.service_type_id:
+            raise serializers.ValidationError('نوع الخدمة لا يطابق تخصصك')
+        
         if order.offers.count() >= 5:
             raise serializers.ValidationError('تم الوصول للحد الأقصى (5 عروض)')
+        
         if Offer.objects.filter(order=order, technician=user).exists():
             raise serializers.ValidationError('قدمت عرضاً على هذا الطلب مسبقاً')
 
